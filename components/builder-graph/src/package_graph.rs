@@ -27,10 +27,6 @@ use petgraph::{
     dot::{Config, Dot},
     graph::EdgeIndex,
     graph::NodeIndex,
-    //    visit::Dfs,
-    //    visit::GraphRef,
-    //    visit::Visitable,
-    //    Direction,
     Graph,
 };
 
@@ -88,7 +84,7 @@ struct PackageInfo {
     // We may need to create the info record before we see the package data...
     package: Option<PackageWithVersionArray>,
 
-    bad_deps: bool,
+    no_deps: bool,
     plan_deps: Vec<PackageIdent>,
     plan_bdeps: Vec<PackageIdent>,
 
@@ -97,7 +93,7 @@ struct PackageInfo {
 
 impl PackageInfo {
     pub fn write(&self) {
-        println!("PackageIdent: {}, bad_deps: {}", self.ident, self.bad_deps);
+        println!("PackageIdent: {}, no_deps: {}", self.ident, self.no_deps);
         if let Some(package_data) = &self.package {
             println!("Target:\t{}", package_data.target.0);
             println!(
@@ -192,14 +188,17 @@ impl PackageInfo {
         }
 
         if !(found_deps && found_bdeps) {
-            // Every package should have deps; if not we need to recheck our assumptions
+            // Not every package has deps. There are a few classes this falls into:
+            // 1) True 'no deps' packages. core/cacerts is a good example
+            // 2) User packages statically built using system dependencies. While not 'pure' habitat packages, this is a supported use case and common in windows.
+            // 3) Bad packages... There are a lot of packages that don't list deps in their manifest, but have them in their plan file. Or don't list them in their plan file, but use them some how.
             println!(
                 "{}: Partial or no deps found for package B: {} R: {}",
                 package.ident.0, found_bdeps, found_deps
             );
-            self.bad_deps = true;
+            self.no_deps = true;
         } else {
-            self.bad_deps = false;
+            self.no_deps = false;
         }
     }
 
@@ -236,18 +235,6 @@ pub struct PackageGraphForTarget {
     // We build this alongside the full graph
     latest_graph: IdentGraph<PackageIndex>,
 }
-
-//IntoEdgeReferences! {delegate_impl[]}
-
-// impl Visitable for Graph<usize, usize> {
-//     type Map = G::Map;
-//     fn visit_map(&self) -> G::Map {
-//         self.0.visit_map()
-//     }
-//     fn reset_map(&self, map: &mut Self::Map) {
-//         self.0.reset_map(map);
-//     }
-// }
 
 impl PackageGraphForTarget {
     pub fn new(target: PackageTarget) -> Self {
@@ -308,7 +295,7 @@ impl PackageGraphForTarget {
             let package_info = PackageInfo {
                 ident: ident.clone(),
                 package: None,
-                bad_deps: false,
+                no_deps: false,
                 plan_deps: Vec::new(),
                 plan_bdeps: Vec::new(),
                 full_graph_index: node_index,

@@ -420,37 +420,40 @@ fn do_resolve(graph: &PackageGraph, name: &str) {
 fn do_rdeps(graph: &PackageGraph, name: &str, filter: &str, max: usize) {
     let start_time = PreciseTime::now();
 
-    let ident = PackageIdent::from_str(name).unwrap();
+    let ident_option = PackageIdent::from_str(name);
+    if ident_option.is_ok() {
+        let ident = ident_option.unwrap();
+        match graph.rdeps(&ident) {
+            Some(rdeps) => {
+                let end_time = PreciseTime::now();
+                let mut filtered: Vec<(String, String)> = rdeps
+                    .into_iter()
+                    .filter(|&(ref x, _)| x.starts_with(filter))
+                    .collect();
 
-    match graph.rdeps(&ident) {
-        Some(rdeps) => {
-            let end_time = PreciseTime::now();
-            let mut filtered: Vec<(String, String)> = rdeps
-                .into_iter()
-                .filter(|&(ref x, _)| x.starts_with(filter))
-                .collect();
+                println!(
+                    "OK: {} items ({} sec)\n",
+                    filtered.len(),
+                    start_time.to(end_time)
+                );
 
-            println!(
-                "OK: {} items ({} sec)\n",
-                filtered.len(),
-                start_time.to(end_time)
-            );
+                if filtered.len() > max {
+                    filtered.drain(max..);
+                }
 
-            if filtered.len() > max {
-                filtered.drain(max..);
+                if !filter.is_empty() {
+                    println!("Results filtered by: {}", filter);
+                }
+
+                for (s1, s2) in filtered {
+                    println!("{} ({})", s1, s2);
+                }
             }
-
-            if !filter.is_empty() {
-                println!("Results filtered by: {}", filter);
-            }
-
-            for (s1, s2) in filtered {
-                println!("{} ({})", s1, s2);
-            }
+            None => println!("No entries found"),
         }
-        None => println!("No entries found"),
+    } else {
+        println!("Bad ident {}", name)
     }
-
     println!();
 }
 
@@ -474,7 +477,7 @@ fn do_deps(graph: &PackageGraph, name: &str) {
 fn do_db_deps(datastore: &DataStore, graph: &PackageGraph, name: &str, filter: &str) {
     let start_time = PreciseTime::now();
     let ident = resolve_name(graph, name);
-    let target = "x86_64-linux";
+    let target = graph.current_target();
 
     println!("Dependencies for: {}", ident);
 
@@ -514,9 +517,9 @@ fn do_check(datastore: &DataStore, graph: &PackageGraph, name: &str, filter: &st
     let mut deps_map = HashMap::new();
     let mut new_deps = Vec::new();
     let ident = resolve_name(graph, name);
-    let target = "x86_64-linux";
+    let target = graph.current_target();
 
-    match datastore.get_job_graph_package(&ident, &target) {
+    match datastore.get_job_graph_package(&ident, &target.to_string()) {
         Ok(package) => {
             if !filter.is_empty() {
                 println!("Checks filtered by: {}\n", filter);
@@ -536,7 +539,7 @@ fn do_check(datastore: &DataStore, graph: &PackageGraph, name: &str, filter: &st
             println!();
 
             for new_dep in new_deps {
-                check_package(datastore, &mut deps_map, &new_dep, filter);
+                check_package(datastore, target, &mut deps_map, &new_dep, filter);
             }
         }
         Err(_) => println!("No matching package found"),
@@ -548,12 +551,12 @@ fn do_check(datastore: &DataStore, graph: &PackageGraph, name: &str, filter: &st
 
 fn check_package(
     datastore: &DataStore,
+    target: PackageTarget,
     deps_map: &mut HashMap<String, String>,
     ident: &str,
     filter: &str,
 ) {
-    let target = "x86_64-linux";
-    match datastore.get_job_graph_package(ident, target) {
+    match datastore.get_job_graph_package(ident, &target.to_string()) {
         Ok(package) => {
             for dep in package.get_deps() {
                 if dep.to_string().starts_with(filter) {
@@ -566,7 +569,7 @@ fn check_package(
                             println!("  {}", dep);
                         }
                     }
-                    check_package(datastore, deps_map, &dep.to_string(), filter);
+                    check_package(datastore, target, deps_map, &dep.to_string(), filter);
                 }
             }
         }

@@ -121,7 +121,6 @@ where
     }
 
     pub fn ident_for_node<'a>(&'a self, node: NodeIndex) -> &'a PackageIdent {
-        //             let ident_index = self.graph.node_weight(node_index).unwrap();
         self.ident_memo.get_ident(node.index())
     }
 
