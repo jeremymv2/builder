@@ -15,6 +15,7 @@
 use std::str::FromStr;
 
 use actix_web::{http::{self,
+                       header::{HeaderName, HeaderValue},
                        StatusCode},
                 web::{self,
                       Data,
@@ -76,10 +77,14 @@ impl Channels {
                   web::get().to(get_packages_for_origin_channel_package))
            .route("/depot/channels/{origin}/{channel}/pkgs/{pkg}/latest",
                   web::get().to(get_latest_package_for_origin_channel_package))
+           .route("/depot/channels/{origin}/{channel}/pkgs/{pkg}/latest",
+                  web::head().to(get_latest_package_for_origin_channel_package_head))
            .route("/depot/channels/{origin}/{channel}/pkgs/{pkg}/{version}",
                   web::get().to(get_packages_for_origin_channel_package_version))
            .route("/depot/channels/{origin}/{channel}/pkgs/{pkg}/{version}/latest",
                   web::get().to(get_latest_package_for_origin_channel_package_version))
+           .route("/depot/channels/{origin}/{channel}/pkgs/{pkg}/{version}/latest",
+                  web::head().to(get_latest_package_for_origin_channel_package_version_head))
            .route("/depot/channels/{origin}/{channel}/pkgs/{pkg}/{version}/{release}",
                   web::get().to(get_package_fully_qualified))
            .route("/depot/channels/{origin}/{channel}/pkgs/promote",
@@ -624,6 +629,35 @@ fn get_latest_package_for_origin_channel_package(req: HttpRequest,
 }
 
 #[allow(clippy::needless_pass_by_value)]
+fn get_latest_package_for_origin_channel_package_head(req: HttpRequest,
+                                                 path: Path<(String, String, String)>,
+                                                 qtarget: Query<Target>)
+                                                 -> HttpResponse {
+    let (origin, channel, pkg) = path.into_inner();
+    let channel = ChannelIdent::from(channel);
+
+    let ident = PackageIdent::new(origin, pkg, None, None);
+
+    match do_get_channel_package(&req, &qtarget, &ident, &channel) {
+        Ok(json_body) => {
+            let res_ident_header = HeaderName::from_lowercase(b"x-pkg-ident").unwrap();
+            let res_ident_value = HeaderValue::from_str(&serde_json::to_string(&json_body["ident"]).unwrap()).unwrap(); 
+            HttpResponse::Ok().header(http::header::CONTENT_TYPE, headers::APPLICATION_JSON)
+                              .header(http::header::CACHE_CONTROL,
+                                      headers::Cache::NoCache.to_string())
+                              .header(res_ident_header, res_ident_value)
+                              .finish()
+        }
+        Err(Error::NotFound) => HttpResponse::new(StatusCode::NOT_FOUND),
+        Err(err) => {
+            debug!("Failed to get latest package, err={}", err);
+            err.into()
+        }
+    }
+}
+
+
+#[allow(clippy::needless_pass_by_value)]
 fn get_latest_package_for_origin_channel_package_version(req: HttpRequest,
                                                          path: Path<(String,
                                                                String,
@@ -642,6 +676,37 @@ fn get_latest_package_for_origin_channel_package_version(req: HttpRequest,
                               .header(http::header::CACHE_CONTROL,
                                       headers::Cache::NoCache.to_string())
                               .body(json_body)
+        }
+        Err(Error::NotFound) => HttpResponse::new(StatusCode::NOT_FOUND),
+        Err(err) => {
+            debug!("Failed to get latest package, err={}", err);
+            err.into()
+        }
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn get_latest_package_for_origin_channel_package_version_head(req: HttpRequest,
+                                                         path: Path<(String,
+                                                               String,
+                                                               String,
+                                                               String)>,
+                                                         qtarget: Query<Target>)
+                                                         -> HttpResponse {
+    let (origin, channel, pkg, version) = path.into_inner();
+    let channel = ChannelIdent::from(channel);
+
+    let ident = PackageIdent::new(origin, pkg, Some(version), None);
+
+    match do_get_channel_package(&req, &qtarget, &ident, &channel) {
+        Ok(json_body) => {
+            let res_ident_header = HeaderName::from_lowercase(b"x-pkg-ident").unwrap();
+            let res_ident_value = HeaderValue::from_str(&serde_json::to_string(&json_body["ident"]).unwrap()).unwrap(); 
+            HttpResponse::Ok().header(http::header::CONTENT_TYPE, headers::APPLICATION_JSON)
+                              .header(http::header::CACHE_CONTROL,
+                                      headers::Cache::NoCache.to_string())
+                              .header(res_ident_header, res_ident_value)
+                              .finish()
         }
         Err(Error::NotFound) => HttpResponse::new(StatusCode::NOT_FOUND),
         Err(err) => {
@@ -726,7 +791,7 @@ fn do_get_channel_package(req: &HttpRequest,
                           qtarget: &Query<Target>,
                           ident: &PackageIdent,
                           channel: &ChannelIdent)
-                          -> Result<String> {
+                          -> Result<serde_json::Value> {
     let opt_session_id = match authorize_session(req, None) {
         Ok(session) => Some(session.get_id()),
         Err(_) => None,
@@ -764,7 +829,7 @@ fn do_get_channel_package(req: &HttpRequest,
                         return Err(Error::SerdeJson(e));
                     }
                 };
-                return Ok(pkg_json);
+                return Ok(serde_json::from_str(&pkg_json).unwrap());
             }
             (true, None) => {
                 trace!("Channel package {} {} {} {:?} - cache hit with 404",
@@ -828,7 +893,7 @@ fn do_get_channel_package(req: &HttpRequest,
                              opt_session_id);
     }
 
-    Ok(json_body)
+    Ok(pkg_json)
 }
 
 pub fn channels_for_package_ident(req: &HttpRequest,

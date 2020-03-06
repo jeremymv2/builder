@@ -58,7 +58,9 @@ use actix_web::{body::Body,
                        header::{ContentDisposition,
                                 ContentType,
                                 DispositionParam,
-                                DispositionType},
+                                DispositionType,
+                                HeaderName,
+                                HeaderValue},
                        StatusCode},
                 web::{self,
                       Data,
@@ -153,6 +155,8 @@ impl Packages {
                   web::get().to(get_packages_for_origin_package_version))
            .route("/depot/pkgs/{origin}/{pkg}/{version}/latest",
                   web::get().to(get_latest_package_for_origin_package_version))
+           .route("/depot/pkgs/{origin}/{pkg}/{version}/latest",
+                  web::head().to(get_latest_package_for_origin_package_version_head))
            .route("/depot/pkgs/{origin}/{pkg}/{version}/{release}",
                   web::post().to(upload_package))
            .route("/depot/pkgs/{origin}/{pkg}/{version}/{release}",
@@ -268,6 +272,32 @@ fn get_latest_package_for_origin_package_version(req: HttpRequest,
                               .header(http::header::CACHE_CONTROL,
                                       headers::Cache::NoCache.to_string())
                               .body(json_body)
+        }
+        Err(err) => {
+            debug!("{}", err);
+            err.into()
+        }
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn get_latest_package_for_origin_package_version_head(req: HttpRequest,
+                                                 path: Path<(String, String, String)>,
+                                                 qtarget: Query<Target>)
+                                                 -> HttpResponse {
+    let (origin, pkg, version) = path.into_inner();
+
+    let ident = PackageIdent::new(origin, pkg, Some(version), None);
+
+    match do_get_package(&req, &qtarget, &ident) {
+        Ok(json_body) => {
+            let res_ident_header = HeaderName::from_lowercase(b"x-pkg-ident").unwrap();
+            let res_ident_value = HeaderValue::from_str(&serde_json::to_string(&json_body["ident"]).unwrap()).unwrap();
+            HttpResponse::Ok().header(http::header::CONTENT_TYPE, headers::APPLICATION_JSON)
+                              .header(http::header::CACHE_CONTROL,
+                                      headers::Cache::NoCache.to_string())
+                              .header(res_ident_header, res_ident_value)
+                              .finish()
         }
         Err(err) => {
             debug!("{}", err);
@@ -1285,7 +1315,7 @@ fn do_upload_package_async(req: HttpRequest,
 fn do_get_package(req: &HttpRequest,
                   qtarget: &Query<Target>,
                   ident: &PackageIdent)
-                  -> Result<String> {
+                  -> Result<serde_json::Value> {
     let opt_session_id = match authorize_session(req, None) {
         Ok(session) => Some(session.get_id()),
         Err(_) => None,
@@ -1321,7 +1351,8 @@ fn do_get_package(req: &HttpRequest,
                         return Err(Error::SerdeJson(e));
                     }
                 };
-                return Ok(pkg_json);
+                // Unwrap safe.
+                return Ok(serde_json::from_str(&pkg_json).unwrap());
             }
             (true, None) => {
                 trace!("Channel package {} {} {:?} - cache hit with 404",
@@ -1411,7 +1442,7 @@ fn do_get_package(req: &HttpRequest,
                              opt_session_id);
     }
 
-    Ok(json_body)
+    Ok(pkg_json)
 }
 
 // Internal helpers
